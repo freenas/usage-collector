@@ -182,6 +182,8 @@ func parseInput(inputs map[string]interface{}, geolocation string, ip string) {
 	OUT_CORE = addToJsonObject(OUT_CORE, geolocation, inputs)
   case "TrueNAS-Enterprise":
 	OUT_ENTERPRISE = addToJsonObject(OUT_ENTERPRISE, geolocation, inputs)
+  case "TrueNAS-ENTERPRISE":
+	OUT_ENTERPRISE = addToJsonObject(OUT_ENTERPRISE, geolocation, inputs)
   case "TrueNAS-SCALE":
 	OUT_SCALE = addToJsonObject(OUT_SCALE, geolocation, inputs)
   default:
