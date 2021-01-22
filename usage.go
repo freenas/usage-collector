@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io/ioutil"
 	"log"
 	"math"
@@ -27,6 +28,7 @@ var DAILYFILE string
 var DAILYFILE_CORE string
 var DAILYFILE_ENTERPRISE string
 var DAILYFILE_SCALE string
+var DAILYFILE_INTERNAL string
 var MONTHLYFILE string
 
 // Create our mutex we use to prevent race conditions when updating
@@ -48,6 +50,7 @@ var OUT output_json
 var OUT_CORE output_json
 var OUT_ENTERPRISE output_json
 var OUT_SCALE output_json
+var OUT_INTERNAL output_json
 var OUT_COUNT map[string]bool
 var OUT_MONTH output_json
 var OUT_COUNT_MONTH map[string]bool
@@ -145,6 +148,21 @@ func addToJsonObject(OUTMAP output_json, geolocation string, inputs map[string]i
     return OUTMAP
 }
 
+func privateIP(ip string) (bool, error) {
+    var err error
+    private := false
+    IP := net.ParseIP(ip)
+    if IP == nil {
+        err = errors.New("Invalid IP")
+    } else {
+        _, private24BitBlock, _ := net.ParseCIDR("10.0.0.0/8")
+        _, private20BitBlock, _ := net.ParseCIDR("172.16.0.0/12")
+        _, private16BitBlock, _ := net.ParseCIDR("192.168.0.0/16")
+        private = private24BitBlock.Contains(IP) || private20BitBlock.Contains(IP) || private16BitBlock.Contains(IP)
+    }
+    return private, err
+}
+
 func parseInput(inputs map[string]interface{}, geolocation string, ip string) {
   //First verify that the system was not already counted
   id := ""
@@ -172,22 +190,29 @@ func parseInput(inputs map[string]interface{}, geolocation string, ip string) {
   // Add to the combined JSON object
   OUT = addToJsonObject(OUT, geolocation, inputs)
 
-  // Add platform specific stats / files
-  switch platform {
-  case "FreeNAS":
-	OUT_CORE = addToJsonObject(OUT_CORE, geolocation, inputs)
-  case "TrueNAS":
-	OUT_ENTERPRISE = addToJsonObject(OUT_ENTERPRISE, geolocation, inputs)
-  case "TrueNAS-CORE":
-	OUT_CORE = addToJsonObject(OUT_CORE, geolocation, inputs)
-  case "TrueNAS-Enterprise":
-	OUT_ENTERPRISE = addToJsonObject(OUT_ENTERPRISE, geolocation, inputs)
-  case "TrueNAS-ENTERPRISE":
-	OUT_ENTERPRISE = addToJsonObject(OUT_ENTERPRISE, geolocation, inputs)
-  case "TrueNAS-SCALE":
-	OUT_SCALE = addToJsonObject(OUT_SCALE, geolocation, inputs)
-  default:
-	fmt.Println("Invalid Platform ID:, %v", platform);
+  // If this is coming in via an internal IP address, lets toss those into their own file
+  isPrivate, _ := privateIP(ip)
+  if ( isPrivate || ip == "" ) {
+	OUT_INTERNAL = addToJsonObject(OUT_INTERNAL, geolocation, inputs)
+  } else {
+
+      // Add platform specific stats / files
+      switch platform {
+        case "FreeNAS":
+	  OUT_CORE = addToJsonObject(OUT_CORE, geolocation, inputs)
+        case "TrueNAS":
+	  OUT_ENTERPRISE = addToJsonObject(OUT_ENTERPRISE, geolocation, inputs)
+        case "TrueNAS-CORE":
+	  OUT_CORE = addToJsonObject(OUT_CORE, geolocation, inputs)
+        case "TrueNAS-Enterprise":
+	  OUT_ENTERPRISE = addToJsonObject(OUT_ENTERPRISE, geolocation, inputs)
+        case "TrueNAS-ENTERPRISE":
+	  OUT_ENTERPRISE = addToJsonObject(OUT_ENTERPRISE, geolocation, inputs)
+        case "TrueNAS-SCALE":
+	  OUT_SCALE = addToJsonObject(OUT_SCALE, geolocation, inputs)
+        default:
+	  fmt.Println("Invalid Platform ID:, %v", platform);
+      }
 
   }
 
@@ -430,6 +455,11 @@ func zero_out_stats() {
   if OUT_SCALE.Country == nil {
     OUT_SCALE.Country = make(map[string]float64)
   }
+
+  OUT_INTERNAL = output_json{}
+  if OUT_INTERNAL.Country == nil {
+    OUT_INTERNAL.Country = make(map[string]float64)
+  }
 }
 
 func zero_out_monthly_stats() {
@@ -448,6 +478,7 @@ func get_daily_filename() {
   newfile_core := SDIR + "/" + t.Format("2006-01-02") + "-CORE.json"
   newfile_enterprise := SDIR + "/" + t.Format("2006-01-02") + "-ENTERPRISE.json"
   newfile_scale := SDIR + "/" + t.Format("2006-01-02") + "-SCALE.json"
+  newfile_internal := SDIR + "/" + t.Format("2006-01-02") + "-INTERNAL.json"
   if newfile != DAILYFILE {
     // Flush previous data to disk
     if DAILYFILE != "" {
@@ -460,6 +491,7 @@ func get_daily_filename() {
     DAILYFILE_CORE = newfile_core
     DAILYFILE_ENTERPRISE = newfile_enterprise
     DAILYFILE_SCALE = newfile_scale
+    DAILYFILE_INTERNAL = newfile_internal
 
     // Update the latest.json symlink
     os.Remove(SDIR + "/latest.json")
@@ -473,6 +505,9 @@ func get_daily_filename() {
 
     os.Remove(SDIR + "/latest-SCALE.json")
     os.Symlink(DAILYFILE_SCALE, SDIR+"/latest-SCALE.json")
+
+    os.Remove(SDIR + "/latest-INTERNAL.json")
+    os.Symlink(DAILYFILE_INTERNAL, SDIR+"/latest-INTERNAL.json")
   }
 
   //Now see if we need to rotate the monthly id file as well
@@ -548,6 +583,18 @@ func load_daily_file() {
     log.Println("Failed unmarshal of JSON in DAILYFILE_SCALE:")
   }
 
+  // Load the INTERNAL file into memory
+  dat, err = ioutil.ReadFile(DAILYFILE_INTERNAL)
+  if err != nil {
+    log.Println(err)
+    log.Println("Failed loading daily file: " + DAILYFILE_INTERNAL)
+  }
+  if err = json.Unmarshal(dat, &OUT_INTERNAL); err != nil {
+    log.Println(err)
+    log.Println("Failed unmarshal of JSON in DAILYFILE_INTERNAL:")
+  }
+
+
 }
 
 func load_monthly_file() {
@@ -582,7 +629,7 @@ func load_monthly_file() {
 }
 
 func flush_json_to_disk() {
-  fmt.Println("Writing to Files:", DAILYFILE, DAILYFILE_CORE, DAILYFILE_ENTERPRISE, DAILYFILE_SCALE, MONTHLYFILE);
+  fmt.Println("Writing to Files:", DAILYFILE, DAILYFILE_CORE, DAILYFILE_ENTERPRISE, DAILYFILE_SCALE, DAILYFILE_INTERNAL, MONTHLYFILE);
   file, _ := json.MarshalIndent(OUT, "", " ")
   _ = ioutil.WriteFile(DAILYFILE, file, 0644)
   file, _ = json.MarshalIndent(OUT_COUNT, "", " ")
@@ -596,6 +643,9 @@ func flush_json_to_disk() {
 
   file, _ = json.MarshalIndent(OUT_SCALE, "", " ")
   _ = ioutil.WriteFile(DAILYFILE_SCALE, file, 0644)
+
+  file, _ = json.MarshalIndent(OUT_INTERNAL, "", " ")
+  _ = ioutil.WriteFile(DAILYFILE_INTERNAL, file, 0644)
 
   file, _ = json.MarshalIndent(OUT_MONTH, "", " ")
   _ = ioutil.WriteFile(MONTHLYFILE, file, 0644)
