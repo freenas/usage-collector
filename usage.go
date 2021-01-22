@@ -629,7 +629,7 @@ func load_monthly_file() {
 }
 
 func flush_json_to_disk() {
-  fmt.Println("Writing to Files:", DAILYFILE, DAILYFILE_CORE, DAILYFILE_ENTERPRISE, DAILYFILE_SCALE, DAILYFILE_INTERNAL, MONTHLYFILE);
+  //fmt.Println("Writing to Files:", DAILYFILE, DAILYFILE_CORE, DAILYFILE_ENTERPRISE, DAILYFILE_SCALE, DAILYFILE_INTERNAL, MONTHLYFILE);
   file, _ := json.MarshalIndent(OUT, "", " ")
   _ = ioutil.WriteFile(DAILYFILE, file, 0644)
   file, _ = json.MarshalIndent(OUT_COUNT, "", " ")
