@@ -133,12 +133,18 @@ func readjson( path string ) {
 
 func addToJsonObject(OUTMAP output_json, geolocation string, inputs map[string]interface{} ) output_json {
 
-    //increment the system count
-    OUTMAP.Syscount = OUTMAP.Syscount+1
-    if len(geolocation)>0 {
-      cnum := OUTMAP.Country[geolocation]
-      OUTMAP.Country[geolocation] = cnum+1
+    _, install := inputs["install"]
+    _, firstboot := inputs["firstboot"]
+
+    if ( ! install && ! firstboot ) {
+      // increment the system count - Only if not a first-boot / installer scenario
+      OUTMAP.Syscount = OUTMAP.Syscount+1
+      if len(geolocation)>0 {
+        cnum := OUTMAP.Country[geolocation]
+        OUTMAP.Country[geolocation] = cnum+1
+      }
     }
+
     //Now start loading all the input fields and incrementing the counters in the map
     for key := range(inputs) {
       if key=="system_hash" || key=="usage_version" { continue }
