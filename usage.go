@@ -34,6 +34,14 @@ var MONTHLYFILE string
 // Create our mutex we use to prevent race conditions when updating
 // counters
 var wlock sync.Mutex
+var slock sync.Mutex
+var ilock sync.Mutex
+
+// Locks for our specific file writers
+var monthlock sync.Mutex
+var entlock sync.Mutex
+var scalelock sync.Mutex
+var corelock sync.Mutex
 
 // Counter for number of increments before a write
 var WCOUNTER = 0
@@ -92,12 +100,16 @@ func submit(rw http.ResponseWriter, req *http.Request) {
 	isocode := get_location(ip)
 	//fmt.Println("IP Address:", ip)
 
-	// Do this all within a locked mutex
-	wlock.Lock()
 	// Check if the daily file needs to roll over
+	// Do this all within a locked mutex
+	slock.Lock()
 	get_daily_filename()
-	// Every 20 updates, we update the JSON file on disk
-	if WCOUNTER >= 20 {
+	// Unlock the mutex now
+	slock.Unlock()
+
+	// Every 100 updates, we update the JSON file on disk
+	wlock.Lock()
+	if WCOUNTER >= 100 {
 		//log.Println("Flushing to disk")
 
 		flush_json_to_disk()
@@ -105,13 +117,12 @@ func submit(rw http.ResponseWriter, req *http.Request) {
 	} else {
 		WCOUNTER++
 	}
+	wlock.Unlock()
 	//log.Println(OUT)
 
 	// Do things with the data
 	parseInput(s, isocode, ip)
 
-	// Unlock the mutex now
-	wlock.Unlock()
 }
 
 func readjson( path string ) {
@@ -188,34 +199,51 @@ func parseInput(inputs map[string]interface{}, geolocation string, ip string) {
   // Init our platform string
   platform := "unknown"
 
-  OUT_COUNT[id] = true
 
   // Locate the platform key
   platform = fmt.Sprintf("%v", inputs["platform"])
 
+
   // Add to the combined JSON object
+  ilock.Lock()
+  OUT_COUNT[id] = true
   OUT = addToJsonObject(OUT, geolocation, inputs)
+  ilock.Unlock()
 
   // If this is coming in via an internal IP address, lets toss those into their own file
   isPrivate, _ := privateIP(ip)
   if ( isPrivate || ip == "" ) {
+	ilock.Lock()
 	OUT_INTERNAL = addToJsonObject(OUT_INTERNAL, geolocation, inputs)
+	ilock.Unlock()
   } else {
 
       // Add platform specific stats / files
       switch platform {
         case "FreeNAS":
+	  corelock.Lock()
 	  OUT_CORE = addToJsonObject(OUT_CORE, geolocation, inputs)
+	  corelock.Unlock()
         case "TrueNAS":
+	  entlock.Lock()
 	  OUT_ENTERPRISE = addToJsonObject(OUT_ENTERPRISE, geolocation, inputs)
+	  entlock.Unlock()
         case "TrueNAS-CORE":
+	  corelock.Lock()
 	  OUT_CORE = addToJsonObject(OUT_CORE, geolocation, inputs)
+	  corelock.Unlock()
         case "TrueNAS-Enterprise":
+	  entlock.Lock()
 	  OUT_ENTERPRISE = addToJsonObject(OUT_ENTERPRISE, geolocation, inputs)
+	  entlock.Unlock()
         case "TrueNAS-ENTERPRISE":
+	  entlock.Lock()
 	  OUT_ENTERPRISE = addToJsonObject(OUT_ENTERPRISE, geolocation, inputs)
+	  entlock.Unlock()
         case "TrueNAS-SCALE":
+	  scalelock.Lock()
 	  OUT_SCALE = addToJsonObject(OUT_SCALE, geolocation, inputs)
+	  scalelock.Unlock()
         default:
 	  fmt.Println("Invalid Platform ID:, %v", platform);
       }
@@ -224,6 +252,7 @@ func parseInput(inputs map[string]interface{}, geolocation string, ip string) {
 
   // MONTHLY STATS OBJECT
   if _, ok:= OUT_COUNT_MONTH[id] ; !ok {
+    monthlock.Lock()
     OUT_COUNT_MONTH[id] = true
     //increment the system count
     OUT_MONTH.Syscount = OUT_MONTH.Syscount+1
@@ -237,6 +266,7 @@ func parseInput(inputs map[string]interface{}, geolocation string, ip string) {
       OUT_MONTH.Stats = addToMap( OUT_MONTH.Stats, key, inputs[key] )
     }
     OUT_MONTH = get_storage_totals(OUT_MONTH, inputs);
+    monthlock.Unlock()
   }
 
 }
